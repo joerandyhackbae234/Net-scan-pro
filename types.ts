@@ -4,9 +4,12 @@ export interface OperatorData {
   name: string;
   strength: number; // 0-100
   latency: number; // ms
-  type: '4G' | '5G' | 'LTE' | 'H+';
+  type: '4G' | '5G' | 'LTE' | 'H+' | '5G-SA';
   status: 'Excellent' | 'Good' | 'Fair' | 'Poor';
   color: string;
+  integrityScore: number; // 0-100 (Kevalidan Sinyal)
+  bands: string[]; // Frekuensi yang terdeteksi
+  verified: boolean;
 }
 
 export interface NetworkStats {
@@ -18,5 +21,6 @@ export interface NetworkStats {
 export interface UserLocation {
   latitude: number;
   longitude: number;
-  city?: string;
+  accuracy?: number;
+  altitude?: number | null;
 }

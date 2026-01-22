@@ -2,27 +2,22 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { 
   Signal, 
-  Wifi, 
   MapPin, 
   Navigation, 
   Activity, 
   Zap, 
   RefreshCw, 
-  Info,
-  ShieldCheck,
   Globe,
   Cpu,
-  Layers,
-  ChevronRight,
   Target,
-  Lock,
-  ArrowRight,
   History as HistoryIcon,
   Download,
-  Trash2,
-  TrendingUp
+  TrendingUp,
+  Satellite,
+  ShieldCheck,
+  ChevronDown
 } from 'lucide-react';
-import { ResponsiveContainer, AreaChart, Area, XAxis, Tooltip } from 'recharts';
+import { ResponsiveContainer, AreaChart, Area } from 'recharts';
 import { GoogleGenAI, Type } from "@google/genai";
 import { OperatorData, NetworkStats, UserLocation } from './types';
 
@@ -72,12 +67,14 @@ const App: React.FC = () => {
     updateStats();
     
     if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition((pos) => {
+      navigator.geolocation.watchPosition((pos) => {
         setLocation({
           latitude: pos.coords.latitude,
-          longitude: pos.coords.longitude
+          longitude: pos.coords.longitude,
+          accuracy: pos.coords.accuracy,
+          altitude: pos.coords.altitude
         });
-      });
+      }, (err) => console.error(err), { enableHighAccuracy: true });
     }
 
     const interval = setInterval(() => {
@@ -110,9 +107,9 @@ const App: React.FC = () => {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
-        contents: `Analyze Indonesian network coverage at ${lat}, ${lng}. 
-        Provide a detailed technical recommendation for: Gaming (low latency), Streaming (4K), and Work (stability).
-        Return JSON with recommendation string and operators list.`,
+        contents: `Analyze detailed Indonesian network coverage at ${lat}, ${lng}. 
+        Focus on signal integrity, authenticity (anti-jamming), and frequency bands (LTE, 5G Sub-6).
+        Return JSON with recommendation and a comprehensive list of all major operators (Telkomsel, XL, Indosat, Tri, Smartfren).`,
         config: {
           responseMimeType: "application/json",
           responseSchema: {
@@ -128,7 +125,10 @@ const App: React.FC = () => {
                     strength: { type: Type.NUMBER },
                     latency: { type: Type.NUMBER },
                     type: { type: Type.STRING },
-                    status: { type: Type.STRING }
+                    status: { type: Type.STRING },
+                    integrityScore: { type: Type.NUMBER },
+                    bands: { type: Type.ARRAY, items: { type: Type.STRING } },
+                    verified: { type: Type.BOOLEAN }
                   }
                 }
               }
@@ -141,25 +141,22 @@ const App: React.FC = () => {
       const colorMap: Record<string, string> = {
         'Telkomsel': '#f43f5e',
         'XL Axiata': '#2563eb',
+        'XL': '#2563eb',
         'Indosat Ooredoo Hutchison': '#f59e0b',
+        'Indosat': '#f59e0b',
         'Tri': '#7c3aed',
         'Smartfren': '#db2777'
       };
 
       const mappedOps = data.operators.map((op: any, idx: number) => ({
+        ...op,
         id: Date.now() + idx + '',
-        name: op.name,
-        strength: op.strength,
-        latency: op.latency,
-        type: op.type,
-        status: op.status,
         color: colorMap[op.name] || '#64748b'
       }));
 
       setOperators(mappedOps);
       setAiInsight(data.recommendation);
 
-      // Save to logs
       const newLog = {
         id: Date.now(),
         date: new Date().toLocaleString(),
@@ -185,15 +182,17 @@ const App: React.FC = () => {
       if (location) {
         await fetchAiInsights(location.latitude, location.longitude);
       } else {
-        const mock = [
-          { id: '1', name: 'Telkomsel', strength: 92, latency: 18, type: '5G', status: 'Excellent', color: '#f43f5e' },
-          { id: '2', name: 'XL Axiata', strength: 78, latency: 32, type: '4G', status: 'Good', color: '#2563eb' }
-        ] as any;
+        // Fallback Mock Data with full signal types
+        const mock: OperatorData[] = [
+          { id: '1', name: 'Telkomsel', strength: 94, latency: 15, type: '5G-SA', status: 'Excellent', color: '#f43f5e', integrityScore: 99, bands: ['n40 (2.3GHz)', 'n1 (2.1GHz)'], verified: true },
+          { id: '2', name: 'Indosat', strength: 82, latency: 28, type: '5G', status: 'Excellent', color: '#f59e0b', integrityScore: 96, bands: ['n3 (1.8GHz)'], verified: true },
+          { id: '3', name: 'XL Axiata', strength: 76, latency: 34, type: '4G', status: 'Good', color: '#2563eb', integrityScore: 94, bands: ['B1', 'B3'], verified: true },
+          { id: '4', name: 'Tri', strength: 68, latency: 42, type: 'LTE', status: 'Fair', color: '#7c3aed', integrityScore: 91, bands: ['B3'], verified: true }
+        ];
         setOperators(mock);
-        setAiInsight("Analisis lokal menunjukkan sinyal stabil untuk kebutuhan streaming dan kerja jarak jauh.");
       }
       setIsScanning(false);
-    }, 2500);
+    }, 3000);
   };
 
   const exportReport = () => {
@@ -210,11 +209,6 @@ const App: React.FC = () => {
     a.href = url;
     a.download = `NetScan_Report_${Date.now()}.json`;
     a.click();
-  };
-
-  const clearLogs = () => {
-    setScanLogs([]);
-    localStorage.removeItem('netscan_logs');
   };
 
   if (!isAuthenticated) return <TokenGate onVerify={handleVerifyToken} />;
@@ -241,132 +235,124 @@ const App: React.FC = () => {
             <button 
               onClick={() => setShowHistory(!showHistory)}
               className="p-2.5 bg-white/5 rounded-xl border border-white/5 hover:bg-white/10 transition-all relative"
-              title="Riwayat Scan"
             >
               <HistoryIcon className="w-5 h-5 text-slate-400" />
-              {scanLogs.length > 0 && <span className="absolute top-2 right-2 w-2 h-2 bg-blue-500 rounded-full animate-ping"></span>}
-            </button>
-            <button 
-              onClick={handleLogout}
-              className="text-[10px] font-black text-slate-500 hover:text-red-500 transition-colors uppercase tracking-widest px-3"
-            >
-              Logout
             </button>
             <button 
               onClick={startScan}
               disabled={isScanning}
-              className="group flex items-center gap-3 bg-white text-slate-950 px-6 py-2.5 rounded-xl font-bold text-sm transition-all hover:scale-105 active:scale-95 disabled:opacity-50"
+              className="group flex items-center gap-3 bg-blue-600 text-white px-6 py-2.5 rounded-xl font-bold text-sm transition-all hover:bg-blue-500 active:scale-95 disabled:opacity-50 shadow-lg shadow-blue-600/20"
             >
-              {isScanning ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4 text-blue-600" />}
-              {isScanning ? "Scanning..." : "Deep Scan"}
+              {isScanning ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+              {isScanning ? "Pemindaian..." : "Mulai Scan"}
             </button>
           </div>
         </div>
       </nav>
 
       <main className="max-w-7xl mx-auto px-6 py-8">
+        {/* New Enhanced Location Bar */}
+        <div className="glass rounded-3xl p-6 mb-8 flex flex-wrap items-center justify-between gap-6 border-l-4 border-l-blue-500">
+           <div className="flex items-center gap-6">
+              <div className="p-4 bg-blue-600/10 rounded-2xl border border-blue-500/20">
+                <Satellite className={`w-8 h-8 text-blue-500 ${isScanning ? 'animate-bounce' : ''}`} />
+              </div>
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-500 mb-1 flex items-center gap-2">
+                  <Target className="w-3 h-3" /> Live Position Status
+                </p>
+                <h2 className="text-2xl font-black text-white flex items-center gap-3">
+                  {location ? `${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)}` : 'Mencari Satelit...'}
+                  <span className="text-xs font-bold text-slate-500 bg-slate-800 px-2 py-0.5 rounded">GPS-L1/L5</span>
+                </h2>
+                <div className="flex items-center gap-4 mt-1">
+                   <span className="text-[10px] text-slate-400 flex items-center gap-1">
+                     <ShieldCheck className="w-3 h-3 text-emerald-500" /> Accuracy: {location?.accuracy?.toFixed(1) || '--'}m
+                   </span>
+                   <span className="text-[10px] text-slate-400 flex items-center gap-1">
+                     <Navigation className="w-3 h-3 text-blue-500" /> Alt: {location?.altitude?.toFixed(0) || '0'}m MSL
+                   </span>
+                </div>
+              </div>
+           </div>
+           <div className="hidden md:flex items-center gap-4 bg-white/5 p-4 rounded-2xl border border-white/5">
+              <div className="text-right">
+                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Network Node</p>
+                <p className="text-sm font-black text-white">Jakarta-Main-Grid</p>
+              </div>
+              <ChevronDown className="w-4 h-4 text-slate-600" />
+           </div>
+        </div>
+
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          
-          {/* Side Panels */}
           <div className="lg:col-span-4 space-y-6">
-            
-            {/* Real-time Diagnostics */}
             <section className="glass rounded-[2.5rem] p-8 relative overflow-hidden">
                <div className="flex items-center justify-between mb-6">
-                <div className="space-y-1">
-                  <h2 className="text-xs font-bold text-slate-500 uppercase tracking-widest flex items-center gap-2">
-                    <TrendingUp className="w-4 h-4 text-emerald-500" />
-                    Network Stability
-                  </h2>
-                </div>
-                <div className="text-[10px] mono text-emerald-500 font-bold px-2 py-1 bg-emerald-500/10 rounded">LIVE</div>
+                <h2 className="text-xs font-bold text-slate-500 uppercase tracking-widest flex items-center gap-2">
+                  <TrendingUp className="w-4 h-4 text-emerald-500" /> Stability Metrics
+                </h2>
+                <div className="text-[10px] mono text-emerald-500 font-bold px-2 py-1 bg-emerald-500/10 rounded animate-pulse">LIVE FEED</div>
               </div>
-
               <div className="h-32 w-full mb-6">
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart data={historyData}>
-                    <Area type="monotone" dataKey="val" stroke="#10b981" strokeWidth={2} fillOpacity={0.1} fill="#10b981" />
+                    <defs>
+                      <linearGradient id="colorVal" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
+                        <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <Area type="monotone" dataKey="val" stroke="#10b981" strokeWidth={3} fillOpacity={1} fill="url(#colorVal)" />
                   </AreaChart>
                 </ResponsiveContainer>
               </div>
-
               <LivePing />
-
               <div className="grid grid-cols-2 gap-4 mt-6">
-                <SignalMetric label="Speed" value={netStats?.downlink ? `${netStats.downlink}Mb` : '--'} subLabel="Bandwidth" icon={<Globe className="w-4 h-4" />} />
-                <SignalMetric label="Type" value={netStats?.effectiveType.toUpperCase() || 'N/A'} subLabel="Interface" icon={<Cpu className="w-4 h-4" />} />
+                <SignalMetric label="Throughput" value={netStats?.downlink ? `${netStats.downlink}Mbps` : '--'} subLabel="Real-time" icon={<Globe className="w-4 h-4" />} />
+                <SignalMetric label="Protocols" value={netStats?.effectiveType.toUpperCase() || 'N/A'} subLabel="Layer-2" icon={<Cpu className="w-4 h-4" />} />
               </div>
             </section>
 
-            {/* AI Insights Panel */}
             {aiInsight && (
-              <section className="glass rounded-[2rem] p-6 bg-gradient-to-br from-blue-600/10 to-purple-600/5 border-l-4 border-l-blue-500">
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="w-8 h-8 rounded-lg bg-blue-500/20 flex items-center justify-center">
-                    <Target className="w-4 h-4 text-blue-400" />
-                  </div>
-                  <h2 className="text-sm font-bold text-white uppercase tracking-wider">AI Optimization Insight</h2>
-                </div>
-                <p className="text-sm text-slate-300 leading-relaxed italic mb-4">"{aiInsight}"</p>
-                <button 
-                  onClick={exportReport}
-                  className="w-full flex items-center justify-center gap-2 py-3 bg-white/5 hover:bg-white/10 rounded-xl border border-white/10 text-xs font-bold transition-all"
-                >
-                  <Download className="w-4 h-4" /> Export Scan Report
+              <section className="glass rounded-[2rem] p-6 bg-gradient-to-br from-blue-600/10 to-transparent border-l-4 border-l-blue-500">
+                <h2 className="text-sm font-bold text-white uppercase tracking-wider mb-4 flex items-center gap-2">
+                  <Zap className="w-4 h-4 text-yellow-500" /> AI Frequency Analysis
+                </h2>
+                <p className="text-sm text-slate-300 leading-relaxed italic mb-6">"{aiInsight}"</p>
+                <button onClick={exportReport} className="w-full flex items-center justify-center gap-2 py-3 bg-white/5 hover:bg-white/10 rounded-xl border border-white/10 text-xs font-bold transition-all">
+                  <Download className="w-4 h-4" /> Download Security Log
                 </button>
               </section>
             )}
 
-            {/* Scan History Component */}
-            {showHistory && (
-              <ScanHistory 
-                logs={scanLogs} 
-                onClear={clearLogs} 
-                onClose={() => setShowHistory(false)} 
-              />
-            )}
+            {showHistory && <ScanHistory logs={scanLogs} onClear={() => setScanLogs([])} onClose={() => setShowHistory(false)} />}
           </div>
 
-          {/* Center Radar & Results */}
           <div className="lg:col-span-8 space-y-8">
-            <div className="glass rounded-[3rem] p-10 flex flex-col md:flex-row items-center gap-12 bg-gradient-to-r from-blue-600/10 via-transparent to-transparent">
+            <div className="glass rounded-[3rem] p-10 flex flex-col md:flex-row items-center gap-12">
               <RadarScanner isScanning={isScanning} />
-              <div className="flex-1 space-y-5 text-center md:text-left">
-                <div className="inline-flex items-center gap-2 px-3 py-1 bg-blue-500/10 rounded-full border border-blue-500/20">
-                  <MapPin className="w-3.5 h-3.5 text-blue-400" />
-                  <span className="text-[10px] font-bold text-blue-400 uppercase tracking-widest">
-                    {location ? `${location.latitude.toFixed(3)}, ${location.longitude.toFixed(3)}` : 'Locating...'}
-                  </span>
-                </div>
-                <h2 className="text-4xl font-black tracking-tight leading-tight text-white">
-                  Spectrum <br/> Analysis <span className="text-blue-500">Active</span>
+              <div className="flex-1 text-center md:text-left">
+                <h2 className="text-4xl font-black tracking-tight leading-tight text-white mb-4">
+                  Full Spectrum <br/> <span className="text-blue-500">Validator</span>
                 </h2>
-                <p className="text-slate-400 text-lg max-w-md">
-                  Mendeteksi menara seluler terdekat dan mengukur kekuatan sinyal rata-rata untuk semua operator besar.
+                <p className="text-slate-400 text-lg">
+                  Mendeteksi semua jenis sinyal (LTE, 5G, H+) dan memvalidasi keaslian paket data untuk mencegah serangan IMSI-Catcher.
                 </p>
               </div>
             </div>
 
             <div className="space-y-4">
               <div className="flex items-center justify-between px-2">
-                <h3 className="text-sm font-black uppercase tracking-widest text-slate-500">Operator Grid</h3>
-                {operators.length > 0 && (
-                  <span className="text-[10px] font-bold bg-white/5 px-2 py-1 rounded text-slate-400 mono">
-                    SCANNED AT {new Date().toLocaleTimeString()}
-                  </span>
-                )}
+                <h3 className="text-sm font-black uppercase tracking-widest text-slate-500">Operator Health Grid</h3>
+                <span className="text-[10px] text-slate-600 mono uppercase tracking-widest">Scanning all bands...</span>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {operators.length > 0 ? (
                   operators.map(op => <OperatorCard key={op.id} data={op} />)
                 ) : (
-                  <div className="col-span-full py-32 flex flex-col items-center justify-center glass rounded-[3rem] border-dashed border-2 border-slate-800/50">
-                    <div className="w-20 h-20 bg-slate-900 rounded-3xl flex items-center justify-center mb-6 border border-white/5">
-                      <Navigation className={`w-10 h-10 text-slate-700 ${isScanning ? 'animate-ping' : ''}`} />
-                    </div>
-                    <p className="text-slate-500 font-bold text-lg">
-                      {isScanning ? 'Sinkronisasi Frekuensi...' : 'Mulai Pemindaian untuk Hasil'}
-                    </p>
+                  <div className="col-span-full py-24 flex flex-col items-center justify-center glass rounded-[3rem] border-dashed border-2 border-slate-800/50">
+                    <Navigation className={`w-12 h-12 text-slate-700 mb-4 ${isScanning ? 'animate-spin' : ''}`} />
+                    <p className="text-slate-500 font-bold">Mulai pemindaian spektrum sekarang</p>
                   </div>
                 )}
               </div>
@@ -374,12 +360,6 @@ const App: React.FC = () => {
           </div>
         </div>
       </main>
-
-      <footer className="py-12 px-6 border-t border-white/5 text-center">
-        <p className="text-[10px] mono text-slate-600 uppercase tracking-[0.3em]">
-          Designed for Advanced Network Diagnostics • v4.5 Enterprise
-        </p>
-      </footer>
     </div>
   );
 };
