@@ -1,0 +1,7 @@
+{
+  "name": "NetScan Pro - Indonesia Network Detector",
+  "description": "A sophisticated network signal monitoring and analysis tool designed for Indonesian operators, featuring AI-powered regional signal predictions and real-time connectivity diagnostics.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
